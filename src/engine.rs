@@ -7,6 +7,115 @@ use std::sync::{Mutex, OnceLock};
 // TODO: On destruction clear up stuff on the global caches.
 
 // https://medium.com/sfu-cspmp/diy-deep-learning-crafting-your-own-autograd-engine-from-scratch-for-effortless-backpropagation-ddab167faaf5
+#[derive(Copy, Clone, Debug)]
+pub struct Value {
+    id: usize,
+}
+
+impl Value {
+    pub fn new(data: f64) -> Self {
+        let id = next_id();
+        set_val(id, data);
+        set_grad(id, 0.0);
+        set_backward(id, None);
+        set_op_info(id, ("".to_string(), vec![]));
+        Self { id }
+    }
+
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
+    pub fn data(&self) -> f64 {
+        val(self.id())
+    }
+
+    pub fn grad(&self) -> f64 {
+        grad(self.id())
+    }
+
+    pub fn backward(&self) {
+        let topo = &mut Vec::<usize>::new();
+        let visited = &mut HashSet::<usize>::new();
+        Self::build_topology(self.id(), topo, visited);
+
+        set_grad(self.id(), 1.0);
+
+        for &node in topo.iter().rev() {
+            if let Some(backward) = backward(node) {
+                backward(op_info(node).1, node);
+            }
+        }
+    }
+
+    fn build_topology(id: usize, topology: &mut Vec<usize>, visited: &mut HashSet<usize>) {
+        if !visited.contains(&id) {
+            visited.insert(id);
+            for child in op_info(id).1 {
+                Self::build_topology(child, topology, visited);
+            }
+            topology.push(id);
+        }
+    }
+}
+
+impl std::fmt::Display for Value {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let (op, args) = op_info(self.id());
+        if !args.is_empty() {
+            fmt.write_fmt(format_args!(
+                "[{0}] [{1}] [{2}] = [{3}], ",
+                args[0],
+                op,
+                args[1],
+                self.data()
+            ))?;
+        }
+        fmt.write_fmt(format_args!("grad = {0}", self.grad()))?;
+        Ok(())
+    }
+}
+
+fn add_backward(args: Vec<usize>, out: usize) {
+    let arg0 = args[0];
+    let arg1 = args[1];
+
+    let out_grad = grad(out);
+    set_grad(arg0, grad(arg0) + 1.0 * out_grad);
+    set_grad(arg1, grad(arg1) + 1.0 * out_grad);
+}
+
+impl std::ops::Add for Value {
+    type Output = Value;
+
+    fn add(self, other: Value) -> Value {
+        let val = Value::new(self.data() + other.data());
+        set_backward(val.id(), Some(add_backward));
+        set_op_info(val.id(), ("+".to_string(), vec![self.id(), other.id()]));
+        val
+    }
+}
+
+fn mul_backward(args: Vec<usize>, out: usize) {
+    let arg0 = args[0];
+    let arg1 = args[1];
+
+    let out_grad = grad(out);
+    set_grad(arg0, grad(arg0) + val(arg1) * out_grad);
+    set_grad(arg1, grad(arg1) + val(arg0) * out_grad);
+}
+
+impl std::ops::Mul for Value {
+    type Output = Value;
+
+    fn mul(self, other: Value) -> Value {
+        let val = Value::new(self.data() * other.data());
+        set_backward(val.id(), Some(mul_backward));
+        set_op_info(val.id(), ("*".to_string(), vec![self.id(), other.id()]));
+        val
+    }
+}
+
 // NOTE: Safe Singleton Globals in Rust: https://stackoverflow.com/a/27826181/6196679
 
 fn next_id_store() -> &'static Mutex<usize> {
@@ -58,6 +167,10 @@ fn op_info(id: usize) -> (String, Vec<usize>) {
     (*op_info_store().lock().unwrap().get(&id).unwrap()).clone()
 }
 
+fn set_op_info(id: usize, op_info: OpInfo) {
+    op_info_store().lock().unwrap().insert(id, op_info);
+}
+
 type Backward = Option<fn(Vec<usize>, usize)>;
 
 fn backward_store() -> &'static Mutex<HashMap<usize, Backward>> {
@@ -71,128 +184,6 @@ fn backward(id: usize) -> Backward {
 
 fn set_backward(id: usize, backward: Backward) {
     backward_store().lock().unwrap().insert(id, backward);
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct Value {
-    id: usize,
-}
-
-impl Value {
-    pub fn new(data: f64) -> Self {
-        Self::new_impl(data)
-    }
-
-    pub fn id(&self) -> usize {
-        self.id
-    }
-
-    pub fn data(&self) -> f64 {
-        val(self.id())
-    }
-
-    pub fn grad(&self) -> f64 {
-        grad(self.id())
-    }
-
-    pub fn backward(&self) {
-        let topo = &mut Vec::<usize>::new();
-        let visited = &mut HashSet::<usize>::new();
-        Self::build_topology(self.id(), topo, visited);
-
-        set_grad(self.id(), 1.0);
-
-        for &node in topo.iter().rev() {
-            if let Some(backward) = backward(node) {
-                backward(op_info(node).1, node);
-            }
-        }
-    }
-
-    fn build_topology(id: usize, topology: &mut Vec<usize>, visited: &mut HashSet<usize>) {
-        if !visited.contains(&id) {
-            visited.insert(id);
-            for child in op_info(id).1 {
-                Self::build_topology(child, topology, visited);
-            }
-            topology.push(id);
-        }
-    }
-
-    fn new_impl(data: f64) -> Self {
-        let id = next_id();
-        set_val(id, data);
-        set_grad(id, 0.0);
-        set_backward(id, None);
-        op_info_store()
-            .lock()
-            .unwrap()
-            .insert(id, ("".to_string(), vec![]));
-        Self { id }
-    }
-}
-
-impl std::fmt::Display for Value {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let (op, args) = op_info(self.id());
-        if !args.is_empty() {
-            fmt.write_fmt(format_args!(
-                "[{0}] [{1}] [{2}] = [{3}], ",
-                args[0],
-                op,
-                args[1],
-                self.data()
-            ))?;
-        }
-        fmt.write_fmt(format_args!("grad = {0}", self.grad()))?;
-        Ok(())
-    }
-}
-
-fn add_backward(args: Vec<usize>, out: usize) {
-    let arg0 = args[0];
-    let arg1 = args[1];
-
-    let out_grad = grad(out);
-    set_grad(arg0, grad(arg0) + 1.0 * out_grad);
-    set_grad(arg1, grad(arg1) + 1.0 * out_grad);
-}
-
-impl std::ops::Add for Value {
-    type Output = Value;
-
-    fn add(self, other: Value) -> Value {
-        let val = Value::new(self.data() + other.data());
-        set_backward(val.id(), Some(add_backward));
-        op_info_store()
-            .lock()
-            .unwrap()
-            .insert(val.id(), ("+".to_string(), vec![self.id(), other.id()]));
-        val
-    }
-}
-
-fn mul_backward(args: Vec<usize>, out: usize) {
-    let arg0 = args[0];
-    let arg1 = args[1];
-
-    let out_grad = grad(out);
-    set_grad(arg0, grad(arg0) + val(arg1) * out_grad);
-    set_grad(arg1, grad(arg1) + val(arg0) * out_grad);
-}
-
-impl std::ops::Mul for Value {
-    type Output = Value;
-
-    fn mul(self, other: Value) -> Value {
-        let val = Value::new(self.data() * other.data());
-        set_backward(val.id(), Some(mul_backward));
-        op_info_store()
-            .lock()
-            .unwrap()
-            .insert(val.id(), ("*".to_string(), vec![self.id(), other.id()]));
-        val
-    }
 }
 
 #[cfg(test)]
