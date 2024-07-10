@@ -1,20 +1,12 @@
-use std::collections::{HashMap, HashSet};
-use std::sync::{Mutex, OnceLock};
+use std::collections::HashSet;
 
-// TODO: Implement operator overloading without needing to wrap with Value;
-// TODO: Make Value generic, can we used an Inner Type?
-// TODO: Ratatui visualization
+// TODO: Make Value generic.
 // TODO: On destruction clear up stuff on the global caches.
-
-// TODO: RHS rename param
-// TODO: move to namespaces
-// TODO: Getter and setter within Value for cache items
-// TODO: set_grad to update_grad
-// TODO: Update readme.md, add links to karpathy, stackoverlfow safe globals
-// TODO: display format as per karpathy's
 
 ///
 /// Value backed by an autograd engine.
+///
+/// TODO: Leaks all memory, need to find a way to GC.
 ///
 #[derive(Copy, Clone, Debug)]
 pub struct Value {
@@ -23,18 +15,18 @@ pub struct Value {
 
 impl Value {
     pub fn new(data: f64) -> Self {
-        let id = next_id();
-        set_data(id, data);
-        set_grad(id, 0.0);
-        set_backward(id, None);
-        set_op_info(id, ("".to_string(), vec![]));
+        let id = store::next_id();
+        store::set_data(id, data);
+        store::reset_grad(id);
+        store::set_backward(id, None);
+        store::set_op_info(id, ("".to_string(), vec![]));
         Self { id }
     }
 
     pub fn relu(&self) -> Value {
         let val = Value::new(if self.data() < 0. { 0. } else { self.data() });
-        set_backward(val.id(), Some(relu_backward));
-        set_op_info(val.id(), ("ReLU".to_string(), vec![self.id()]));
+        store::set_backward(val.id(), Some(relu_backward));
+        store::set_op_info(val.id(), ("ReLU".to_string(), vec![self.id()]));
         val
     }
 
@@ -44,8 +36,8 @@ impl Value {
 
     pub fn powv(&self, exp: Value) -> Value {
         let val = Value::new(self.data().powf(exp.data()));
-        set_backward(val.id(), Some(pow_backward));
-        set_op_info(val.id(), ("^".to_string(), vec![self.id(), exp.id()]));
+        store::set_backward(val.id(), Some(pow_backward));
+        store::set_op_info(val.id(), ("^".to_string(), vec![self.id(), exp.id()]));
         val
     }
 
@@ -54,15 +46,15 @@ impl Value {
     }
 
     pub fn data(&self) -> f64 {
-        data(self.id())
+        store::data(self.id())
     }
 
     pub fn grad(&self) -> f64 {
-        grad(self.id())
+        store::grad(self.id())
     }
 
-    pub fn op_info(&self) -> OpInfo {
-        op_info(self.id())
+    pub fn op_info(&self) -> store::OpInfo {
+        store::op_info(self.id())
     }
 
     pub fn backward(&self) {
@@ -70,11 +62,11 @@ impl Value {
         let visited = &mut HashSet::<usize>::new();
         Self::build_topology(self.id(), topo, visited);
 
-        set_grad(self.id(), 1.0);
+        store::update_grad(self.id(), 1.0);
 
         for &node in topo.iter().rev() {
-            if let Some(backward) = backward(node) {
-                backward(op_info(node).1, node);
+            if let Some(backward) = store::backward(node) {
+                backward(store::op_info(node).1, node);
             }
         }
     }
@@ -82,7 +74,7 @@ impl Value {
     fn build_topology(id: usize, topology: &mut Vec<usize>, visited: &mut HashSet<usize>) {
         if !visited.contains(&id) {
             visited.insert(id);
-            for child in op_info(id).1 {
+            for child in store::op_info(id).1 {
                 Self::build_topology(child, topology, visited);
             }
             topology.push(id);
@@ -92,17 +84,35 @@ impl Value {
 
 impl std::fmt::Display for Value {
     fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let (op, args) = op_info(self.id());
-        if !args.is_empty() {
-            fmt.write_fmt(format_args!(
-                "[{0}] [{1}] [{2}] = [{3}], ",
-                args[0],
-                op,
-                args[1],
-                self.data()
-            ))?;
+        let (op, args) = store::op_info(self.id());
+        match args.len() {
+            0 => {
+                fmt.write_fmt(format_args!(
+                    "Value(data={:.06}, grad={:.06})",
+                    self.data(),
+                    self.grad()
+                ))?;
+            }
+            1 => {
+                fmt.write_fmt(format_args!(
+                    "{} [Value(data={:.06}, grad={:.06})]",
+                    op,
+                    store::data(args[0]),
+                    store::grad(args[0])
+                ))?;
+            }
+            2 => {
+                fmt.write_fmt(format_args!(
+                    "[Value(data={:.06}, grad={:.06})] {} [Value(data={:.06}, grad={:.06})]",
+                    store::data(args[1]),
+                    store::grad(args[1]),
+                    op,
+                    store::data(args[1]),
+                    store::grad(args[1])
+                ))?;
+            }
+            _ => unimplemented!(),
         }
-        fmt.write_fmt(format_args!("grad = {0}", self.grad()))?;
         Ok(())
     }
 }
@@ -111,21 +121,20 @@ fn pow_backward(args: Vec<usize>, out: usize) {
     let arg0 = args[0];
     let arg1 = args[1];
 
-    let arg1_data = data(arg1);
-    set_grad(
+    let arg1_data = store::data(arg1);
+    store::update_grad(
         arg0,
-        grad(arg0) + (arg1_data * data(arg0).powf(arg1_data - 1.)) * grad(out),
+        (arg1_data * store::data(arg0).powf(arg1_data - 1.)) * store::grad(out),
     )
 }
 
 fn relu_backward(args: Vec<usize>, out: usize) {
     let arg0 = args[0];
 
-    let arg0_grad = grad(arg0);
-    if data(out) > 0. {
-        set_grad(arg0, arg0_grad + grad(out))
+    if store::data(out) > 0. {
+        store::update_grad(arg0, store::grad(out))
     } else {
-        set_grad(arg0, arg0_grad + 0.)
+        store::update_grad(arg0, 0.)
     }
 }
 
@@ -133,9 +142,9 @@ fn add_backward(args: Vec<usize>, out: usize) {
     let arg0 = args[0];
     let arg1 = args[1];
 
-    let out_grad = grad(out);
-    set_grad(arg0, grad(arg0) + out_grad);
-    set_grad(arg1, grad(arg1) + out_grad);
+    let out_grad = store::grad(out);
+    store::update_grad(arg0, out_grad);
+    store::update_grad(arg1, out_grad);
 }
 
 impl std::ops::Add for Value {
@@ -143,8 +152,8 @@ impl std::ops::Add for Value {
 
     fn add(self, rhs: Value) -> Self::Output {
         let val = Value::new(self.data() + rhs.data());
-        set_backward(val.id(), Some(add_backward));
-        set_op_info(val.id(), ("+".to_string(), vec![self.id(), rhs.id()]));
+        store::set_backward(val.id(), Some(add_backward));
+        store::set_op_info(val.id(), ("+".to_string(), vec![self.id(), rhs.id()]));
         val
     }
 }
@@ -193,9 +202,9 @@ fn mul_backward(args: Vec<usize>, out: usize) {
     let arg0 = args[0];
     let arg1 = args[1];
 
-    let out_grad = grad(out);
-    set_grad(arg0, grad(arg0) + data(arg1) * out_grad);
-    set_grad(arg1, grad(arg1) + data(arg0) * out_grad);
+    let out_grad = store::grad(out);
+    store::update_grad(arg0, store::data(arg1) * out_grad);
+    store::update_grad(arg1, store::data(arg0) * out_grad);
 }
 
 impl std::ops::Mul for Value {
@@ -203,8 +212,8 @@ impl std::ops::Mul for Value {
 
     fn mul(self, rhs: Value) -> Self::Output {
         let val = Value::new(self.data() * rhs.data());
-        set_backward(val.id(), Some(mul_backward));
-        set_op_info(val.id(), ("*".to_string(), vec![self.id(), rhs.id()]));
+        store::set_backward(val.id(), Some(mul_backward));
+        store::set_op_info(val.id(), ("*".to_string(), vec![self.id(), rhs.id()]));
         val
     }
 }
@@ -261,129 +270,140 @@ impl std::ops::Div<f64> for Value {
     }
 }
 
-// NOTE: Safe Singleton Globals in Rust: https://stackoverflow.com/a/27826181/6196679
+///
+/// NOTE: Refer safe singleton globals in Rust: https://stackoverflow.com/a/27826181/6196679
+///
+mod store {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
 
-fn next_id_store() -> &'static Mutex<usize> {
-    static ID: OnceLock<Mutex<usize>> = OnceLock::new();
-    ID.get_or_init(|| Mutex::new(0))
+    fn next_id_store() -> &'static Mutex<usize> {
+        static ID: OnceLock<Mutex<usize>> = OnceLock::new();
+        ID.get_or_init(|| Mutex::new(0))
+    }
+
+    pub fn next_id() -> usize {
+        let global_state = next_id_store();
+        let mut state = global_state.lock().unwrap();
+        *state += 1;
+        *state
+    }
+
+    fn grad_store() -> &'static Mutex<HashMap<usize, f64>> {
+        static MAP: OnceLock<Mutex<HashMap<usize, f64>>> = OnceLock::new();
+        MAP.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    pub fn grad(id: usize) -> f64 {
+        *grad_store().lock().unwrap().get(&id).unwrap()
+    }
+
+    pub fn reset_grad(id: usize) {
+        grad_store().lock().unwrap().insert(id, 0.);
+    }
+
+    pub fn update_grad(id: usize, delta: f64) {
+        let grad = grad(id);
+        grad_store().lock().unwrap().insert(id, grad + delta);
+    }
+
+    fn data_store() -> &'static Mutex<HashMap<usize, f64>> {
+        static MAP: OnceLock<Mutex<HashMap<usize, f64>>> = OnceLock::new();
+        MAP.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    pub fn data(id: usize) -> f64 {
+        *data_store().lock().unwrap().get(&id).unwrap()
+    }
+
+    pub fn set_data(id: usize, data: f64) {
+        data_store().lock().unwrap().insert(id, data);
+    }
+
+    pub type OpInfo = (String, Vec<usize>);
+
+    fn op_info_store() -> &'static Mutex<HashMap<usize, OpInfo>> {
+        static MAP: OnceLock<Mutex<HashMap<usize, OpInfo>>> = OnceLock::new();
+        MAP.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    pub fn op_info(id: usize) -> (String, Vec<usize>) {
+        (*op_info_store().lock().unwrap().get(&id).unwrap()).clone()
+    }
+
+    pub fn set_op_info(id: usize, op_info: OpInfo) {
+        op_info_store().lock().unwrap().insert(id, op_info);
+    }
+
+    pub type Backward = Option<fn(Vec<usize>, usize)>;
+
+    fn backward_store() -> &'static Mutex<HashMap<usize, Backward>> {
+        static MAP: OnceLock<Mutex<HashMap<usize, Backward>>> = OnceLock::new();
+        MAP.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    pub fn backward(id: usize) -> Backward {
+        *backward_store().lock().unwrap().get(&id).unwrap()
+    }
+
+    pub fn set_backward(id: usize, backward: Backward) {
+        backward_store().lock().unwrap().insert(id, backward);
+    }
 }
 
-fn next_id() -> usize {
-    let global_state = next_id_store();
-    let mut state = global_state.lock().unwrap();
-    *state += 1;
-    *state
-}
+pub mod viz {
+    use super::*;
 
-fn grad_store() -> &'static Mutex<HashMap<usize, f64>> {
-    static MAP: OnceLock<Mutex<HashMap<usize, f64>>> = OnceLock::new();
-    MAP.get_or_init(|| Mutex::new(HashMap::new()))
-}
+    pub fn render_dot(root: usize) -> String {
+        let (nodes, edges) = trace(root);
 
-fn grad(id: usize) -> f64 {
-    *grad_store().lock().unwrap().get(&id).unwrap()
-}
-
-fn set_grad(id: usize, grad: f64) {
-    grad_store().lock().unwrap().insert(id, grad);
-}
-
-fn data_store() -> &'static Mutex<HashMap<usize, f64>> {
-    static MAP: OnceLock<Mutex<HashMap<usize, f64>>> = OnceLock::new();
-    MAP.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn data(id: usize) -> f64 {
-    *data_store().lock().unwrap().get(&id).unwrap()
-}
-
-fn set_data(id: usize, data: f64) {
-    data_store().lock().unwrap().insert(id, data);
-}
-
-type OpInfo = (String, Vec<usize>);
-
-fn op_info_store() -> &'static Mutex<HashMap<usize, OpInfo>> {
-    static MAP: OnceLock<Mutex<HashMap<usize, OpInfo>>> = OnceLock::new();
-    MAP.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn op_info(id: usize) -> (String, Vec<usize>) {
-    (*op_info_store().lock().unwrap().get(&id).unwrap()).clone()
-}
-
-fn set_op_info(id: usize, op_info: OpInfo) {
-    op_info_store().lock().unwrap().insert(id, op_info);
-}
-
-type Backward = Option<fn(Vec<usize>, usize)>;
-
-fn backward_store() -> &'static Mutex<HashMap<usize, Backward>> {
-    static MAP: OnceLock<Mutex<HashMap<usize, Backward>>> = OnceLock::new();
-    MAP.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn backward(id: usize) -> Backward {
-    *backward_store().lock().unwrap().get(&id).unwrap()
-}
-
-fn set_backward(id: usize, backward: Backward) {
-    backward_store().lock().unwrap().insert(id, backward);
-}
-
-pub fn render_dot(root: usize) -> String {
-    let (nodes, edges) = trace(root);
-
-    let mut nodes_str = String::new();
-    let mut edges_str = String::new();
-    for node in nodes {
-        let id_str = format!("{:08}", node);
-        nodes_str += &format!(
-            "    \"{}\" [label=\"{{ data {:.06} | grad {:.06} }}\" shape=record]\n",
-            id_str,
-            data(node),
-            grad(node)
-        );
-        let op_info = op_info(node);
-        if !op_info.0.is_empty() {
+        let mut nodes_str = String::new();
+        let mut edges_str = String::new();
+        for node in nodes {
+            let id_str = format!("{:08}", node);
             nodes_str += &format!(
-                "    \"{}{}\" [label=\"{}\"]\n",
-                id_str, op_info.0, op_info.0
+                "    \"{}\" [label=\"{{ data {:.06} | grad {:.06} }}\" shape=record]\n",
+                id_str,
+                store::data(node),
+                store::grad(node)
             );
-            edges_str += &format!("    \"{}{}\" -> \"{}\"\n", id_str, op_info.0, id_str);
+            let op_info = store::op_info(node);
+            if !op_info.0.is_empty() {
+                nodes_str += &format!(
+                    "    \"{}{}\" [label=\"{}\"]\n",
+                    id_str, op_info.0, op_info.0
+                );
+                edges_str += &format!("    \"{}{}\" -> \"{}\"\n", id_str, op_info.0, id_str);
+            }
         }
+
+        for (n1, n2) in edges {
+            let n1_str = format!("{:08}", n1);
+            let n2_str = format!("{:08}", n2);
+            let op_info2 = store::op_info(n2);
+            edges_str += &format!("    \"{}\" -> \"{}{}\"\n", n1_str, n2_str, op_info2.0);
+        }
+
+        format!(
+            "strict digraph {{\n    graph [rankdir=LR]\n\n{}{}}}",
+            nodes_str, edges_str
+        )
     }
 
-    for (n1, n2) in edges {
-        let n1_str = format!("{:08}", n1);
-        let n2_str = format!("{:08}", n2);
-        let op_info2 = op_info(n2);
-        edges_str += &format!("    \"{}\" -> \"{}{}\"\n", n1_str, n2_str, op_info2.0);
+    fn trace(root: usize) -> (HashSet<usize>, HashSet<(usize, usize)>) {
+        let mut nodes = HashSet::new();
+        let mut edges = HashSet::new();
+        build(root, &mut nodes, &mut edges);
+        (nodes, edges)
     }
 
-    let x = format!(
-        r#"strict digraph {{
-    graph [rankdir=LR]
-{}{}}}"#,
-        nodes_str, edges_str
-    );
-    print!("{}", x);
-    x
-}
-
-fn trace(root: usize) -> (HashSet<usize>, HashSet<(usize, usize)>) {
-    let mut nodes = HashSet::new();
-    let mut edges = HashSet::new();
-    build(root, &mut nodes, &mut edges);
-    (nodes, edges)
-}
-
-fn build(v: usize, nodes: &mut HashSet<usize>, edges: &mut HashSet<(usize, usize)>) {
-    if !nodes.contains(&v) {
-        nodes.insert(v);
-        for child in op_info(v).1 {
-            edges.insert((child, v));
-            build(child, nodes, edges);
+    fn build(v: usize, nodes: &mut HashSet<usize>, edges: &mut HashSet<(usize, usize)>) {
+        if !nodes.contains(&v) {
+            nodes.insert(v);
+            for child in store::op_info(v).1 {
+                edges.insert((child, v));
+                build(child, nodes, edges);
+            }
         }
     }
 }
@@ -414,10 +434,19 @@ mod tests {
     #[test]
     fn init_tests_display() {
         let x = Value::new(1.0);
-        let y = x + x;
+        let y = x.relu();
+        let z = x + y;
+        z.backward();
 
-        assert_eq!(format!("{}", x), "grad = 0");
-        assert_eq!(format!("{}", y), "[1] [+] [1] = [2], grad = 0");
+        assert_eq!(format!("{}", x), "Value(data=1.000000, grad=2.000000)");
+        assert_eq!(
+            format!("{}", y),
+            "ReLU [Value(data=1.000000, grad=2.000000)]"
+        );
+        assert_eq!(
+            format!("{}", z),
+            "[Value(data=1.000000, grad=1.000000)] + [Value(data=1.000000, grad=1.000000)]"
+        );
     }
 
     #[test]

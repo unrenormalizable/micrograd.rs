@@ -3,39 +3,38 @@
 
 > Port of Karpathy's [micrograd](https://github.com/karpathy/micrograd)
 
-![awww](https://raw.githubusercontent.com/karpathy/micrograd/master/puppy.jpg)
+[![CDP](https://github.com/unrenormalizable/micrograd.rs/actions/workflows/cdp.yml/badge.svg)](https://github.com/unrenormalizable/micrograd.rs/actions/workflows/cdp.yml) [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg?label=license)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 
 A tiny Autograd engine (with a bite! :)). Implements backpropagation (reverse-mode autodiff) over a dynamically built DAG and a small neural networks library on top of it with a PyTorch-like API. Both are tiny, with about 100 and 50 lines of code respectively. The DAG only operates over scalar values, so e.g. we chop up each neuron into all of its individual tiny adds and multiplies. However, this is enough to build up entire deep neural nets doing binary classification, as the demo notebook shows. Potentially useful for educational purposes.
-
-### Installation
-
-```bash
-pip install micrograd
-```
 
 ### Example usage
 
 Below is a slightly contrived example showing a number of possible supported operations:
 
-```python
-from micrograd.engine import Value
+```rust
+use micrograd::engine::**
 
-a = Value(-4.0)
-b = Value(2.0)
-c = a + b
-d = a * b + b**3
-c += c + 1
-c += 1 + c + (-a)
-d += d * 2 + (b + a).relu()
-d += 3 * d + (b - a).relu()
-e = c - d
-f = e**2
-g = f / 2.0
-g += 10.0 / f
-print(f'{g.data:.4f}') # prints 24.7041, the outcome of this forward pass
-g.backward()
-print(f'{a.grad:.4f}') # prints 138.8338, i.e. the numerical value of dg/da
-print(f'{b.grad:.4f}') # prints 645.5773, i.e. the numerical value of dg/db
+let a = Value::new(-4.0);
+let b = Value::new(2.0);
+let mut c = a + b;
+let mut d = a * b + b.pow(3.);
+c = c + (c + 1.);
+c = c + (1. + c + (-a));
+d = d + (d * 2. + (b + a).relu());
+d = d + (3. * d + (b - a).relu());
+let e = c - d;
+let f = e.pow(2.);
+let mut g = f / 2.0;
+g = g + (10.0 / f);
+g.backward();
+let (amg, bmg, gmg) = (a, b, g);
+
+let tol = 1e-6;
+// forward pass went well
+assert_float_eq!(gmg.data(), 24.70408163265306, abs <= tol);
+// backward pass went well
+assert_float_eq!(amg.grad(), 138.83381924198252, abs <= tol);
+assert_float_eq!(bmg.grad(), 645.5772594752186, abs <= tol);
 ```
 
 ### Training a neural net
@@ -57,15 +56,3 @@ dot = draw_dot(y)
 ```
 
 ![2d neuron](https://raw.githubusercontent.com/karpathy/micrograd/master/gout.svg)
-
-### Running tests
-
-To run the unit tests you will have to install [PyTorch](https://pytorch.org/), which the tests use as a reference for verifying the correctness of the calculated gradients. Then simply:
-
-```bash
-python -m pytest
-```
-
-### License
-
-MIT
