@@ -12,7 +12,7 @@ A tiny Autograd engine (with a bite! :)). Implements backpropagation (reverse-mo
 Below is a slightly contrived example showing a number of possible supported operations:
 
 ```rust
-use micrograd::engine::**
+use micrograd::engine::*;
 
 let a = Value::new(-4.0);
 let b = Value::new(2.0);
