@@ -354,8 +354,8 @@ mod store {
 pub mod viz {
     use super::*;
 
-    pub fn render_dot(root: usize) -> String {
-        let (nodes, edges) = trace(root);
+    pub fn render_dot(root: Value) -> String {
+        let (nodes, edges) = trace(root.id());
 
         let mut nodes_str = String::new();
         let mut edges_str = String::new();
