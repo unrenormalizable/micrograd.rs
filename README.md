@@ -47,12 +47,21 @@ The notebook `demo.ipynb` provides a full demo of training an 2-layer neural net
 
 For added convenience, the notebook `trace_graph.ipynb` produces graphviz visualizations. E.g. this one below is of a simple 2D neuron, arrived at by calling `draw_dot` on the code below, and it shows both the data (left number in each node) and the gradient (right number in each node).
 
-```python
-from micrograd import nn
-n = nn.Neuron(2)
-x = [Value(1.0), Value(-2.0)]
-y = n(x)
-dot = draw_dot(y)
+```rust
+extern crate micrograd;
+
+use micrograd::engine::*;
+
+fn main() {
+    let a = Value::new(5.0);
+    let b = 35.0 + a.pow(-3.) / -1.5;
+    let c = b.relu();
+    c.backward();
+
+    let dot = viz::render_dot(c);
+    println!("{dot}");
+}
 ```
 
-![2d neuron](https://raw.githubusercontent.com/karpathy/micrograd/master/gout.svg)
+![computation graph of the above code](https://github.com/unrenormalizable/micrograd.rs/assets/152241361/0fd6cfd9-cc4d-4e1d-a421-a9e9279e5128)
+
