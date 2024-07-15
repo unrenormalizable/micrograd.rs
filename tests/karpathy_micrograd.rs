@@ -4,14 +4,14 @@ use float_eq::*;
 use micrograd::engine::*;
 
 #[test]
-fn karpathy_test_sanity_check() {
+fn karpathy_test_sanity_check2() {
     let x = Value::new(-4.0);
-    let z = 2. * x + 2. + x;
-    let q = z.relu() + z * x;
-    let h = (z * z).relu();
-    let y = h + q + q * x;
+    let z = 2. * x.clone() + 2. + x.clone();
+    let q = z.clone().relu() + z.clone() * x.clone();
+    let h = (z.clone() * z).relu();
+    let y = h + q.clone() + q * x.clone();
     y.backward();
-    let (xmg, ymg) = (x, y);
+    let (xmg, ymg) = (x, y.clone());
 
     // forward pass went well
     assert_float_eq!(ymg.data(), -20.0, abs <= 1e-10);
@@ -20,19 +20,19 @@ fn karpathy_test_sanity_check() {
 }
 
 #[test]
-fn karpathy_test_more_ops() {
+fn karpathy_test_more_ops2() {
     let a = Value::new(-4.0);
     let b = Value::new(2.0);
-    let mut c = a + b;
-    let mut d = a * b + b.pow(3.);
-    c = c + (c + 1.);
-    c = c + (1. + c + (-a));
-    d = d + (d * 2. + (b + a).relu());
-    d = d + (3. * d + (b - a).relu());
+    let mut c = a.clone() + b.clone();
+    let mut d = a.clone() * b.clone() + b.clone().pow(3.);
+    c = c.clone() + c.clone() + 1.;
+    c = c.clone() + 1. + c + -a.clone();
+    d = d.clone() + d.clone() * 2. + (b.clone() + a.clone()).relu();
+    d = d.clone() + 3. * d + (b.clone() - a.clone()).relu();
     let e = c - d;
     let f = e.pow(2.);
-    let mut g = f / 2.0;
-    g = g + (10.0 / f);
+    let mut g = f.clone() / 2.0;
+    g = g + 10.0 / f;
     g.backward();
     let (amg, bmg, gmg) = (a, b, g);
 
