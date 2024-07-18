@@ -45,6 +45,10 @@ impl Value {
         *self.grad.borrow()
     }
 
+    pub fn reset_grad(&self) {
+        *self.grad.borrow_mut() = Default::default()
+    }
+
     pub fn relu(&self) -> Value {
         let mut val = Value::new(if self.data() < 0. { 0. } else { self.data() });
         *val.backward.borrow_mut() = Some(Self::relu_backward);

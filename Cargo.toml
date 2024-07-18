@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+rand = "0.8.5"
+itertools = "0.13.0"
+color-eyre = "0.6.3"
 
 [dev-dependencies]
 float_eq = "1.0.1"

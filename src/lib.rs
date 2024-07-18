@@ -1,4 +1,5 @@
 pub mod engine;
+pub mod nn;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
